@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 TEST_OBJECT_FW = False  # make this false for test object, True for release FW(RC)
 
 Rx_DEVICE_COM_PORT = 'com10' #responder COM Port
-Tx1_DEVICE_COM_PORT = 'com11' #initiator1 COM Port
+Tx1_DEVICE_COM_PORT = 'com13' #initiator1 COM Port
 # Tx2_DEVICE_COM_PORT = 'com32' #initiator2 COM Port
 # Tx3_DEVICE_COM_PORT = 'com34' #initiator3 COM Port 
 # Tx4_DEVICE_COM_PORT = 'com35' #initiator4 COM Port
@@ -56,21 +56,25 @@ def save_csv(csvf, row):
     with open(csvf, "a", newline="") as F:
         w = csv.writer(F)
         w.writerow(row)
-
+        
 class Unlab_SR100_ToA_AoA():
     def __init__(self):
         self.reset_delay = 3 # delay setting(sec)
         self.ranging_stop_delay = 1 # delay setting(Sec)
         self.delay = 1 # delay setting(sec)
-        # self.ref = np.array([0.0001, 1.25]) # reference position of tag
         self.cnt = 0
         
         ## set baudrate ##
         self.scpi_rx = serial.Serial(Rx_DEVICE_COM_PORT, baudrate=230400, timeout=6) 
         self.scpi_tx1 = serial.Serial(Tx1_DEVICE_COM_PORT, baudrate=230400, timeout=6)
         
-        ## Kalman Filter Variables ##
-        
+        '''USER INPUT VARIABLES'''
+        # self.ref = np.array([0.0001, 1.25]) # reference position of tag
+        h_anc = 1.85 # height of anchor(SECC)
+        h_tag = 1.45 # height of tag(CAR)
+        self.h_diff = h_anc - h_tag
+
+        ''' Kalman Filter Variables '''
         ##Time Interval
         self.dt = 1
         ##State Vectors 
@@ -78,19 +82,19 @@ class Unlab_SR100_ToA_AoA():
         ##State Trasition Matrixs
         self.A = np.eye(6)+np.diag([self.dt for i in range(0,4)],k=2)+np.diag([pow(self.dt,2)/2 for i in range(0,2)],k=4)
         ##Error Covariance Matrix
-        self.pa = np.eye(2)*(pow(self.dt,4)/4)
-        self.pb = np.eye(2)*(pow(self.dt,3)/2)
-        self.pc = np.eye(2)*(pow(self.dt,2)/2)
-        self.pd = np.eye(2)*self.dt
-        self.p1= np.hstack((self.pa,self.pb,self.pc))
-        self.p2= np.hstack((self.pb,self.pc,self.pd))
-        self.p3= np.hstack((self.pc,self.pd,np.eye(2)))
-        self.P = np.vstack((self.p1,self.p2,self.p3)) # Init State Covariance
+        pa = np.eye(2)*(pow(self.dt,4)/4)
+        pb = np.eye(2)*(pow(self.dt,3)/2)
+        pc = np.eye(2)*(pow(self.dt,2)/2)
+        pd = np.eye(2)*self.dt
+        p1= np.hstack((pa,pb,pc))
+        p2= np.hstack((pb,pc,pd))
+        p3= np.hstack((pc,pd,np.eye(2)))
+        self.P = np.vstack((p1,p2,p3)) # Init State Covariance
        
-        #Process Noise Covariance About 
+        #Process Noise Covariance 
         self.Q = np.diag([0.01,0.01,0.25,0.16,0.25,0.16]) 
 
-        #Measurement Noise
+        #Measurement Noise Covariance
         r1 = 0.1692
         r2 = 0.1991
         mul = 5
@@ -100,16 +104,17 @@ class Unlab_SR100_ToA_AoA():
         self.H = np.array([[1,0,0,0,0,0],[0,1,0,0,0,0]])
         
     def ekf_update(self, Measurement):
-            #1. Time Update("Predict")
+        '''1. Time Update("Predict")'''
         #1.1 Project the state ahead
         if (self.cnt == 0):
-            self.pXk = self.A @ self.X
+            X = np.array([[Measurement[0,0]],[Measurement[1,0]],[0.1],[0.1],[1],[1]])
+            self.pXk = self.A @ X
         else : self.pXk = self.A @ self.X
             
         #1.2 Project the error covariance ahead
         self.pPk = (self.A @ self.P @ np.transpose(self.A)) + self.Q 
             
-        #2. Measurement Update("Correct")
+        '''2. Measurement Update("Correct")'''
         #2.1 Compute the Kalman gain Kk
         self.Ksk = self.H @ self.pPk @ np.transpose(self.H) + self.R
         self.Kk = self.pPk @ np.transpose(self.H) @ inv(self.Ksk)
@@ -147,30 +152,22 @@ class Unlab_SR100_ToA_AoA():
         time.sleep(self.reset_delay)
 
         state_ntf_tx = serial_rx(self.scpi_tx1)
-        # print(state_ntf_tx)
         state_ntf_tx = serial_rx(self.scpi_rx)
-        # print(state_ntf_tx)
         
         state_ntf_rx = serial_trx(self.scpi_rx, "UWB ANTPAIR 1\r\n") # Set PDOA offset to responder
-        # print(state_ntf_rx)
         state_ntf_rx = serial_trx(self.scpi_rx, "UWB PDOAOFFSET -60\r\n") # Input offset value
-        # print(state_ntf_rx)
 
         ## Session #1 Ranging start ##
         state_ntf_tx = serial_trx(self.scpi_tx1, "UWB MTINIT1 ON\r\n") # Initiator of Session #1 start Command
-        # print(state_ntf_tx) 
         state_ntf_rx = serial_trx(self.scpi_rx, "UWB MTRESP1 ON\r\n") # Responder of Session #1 start Command
-        # print(state_ntf_rx)
         state_ntf_tx = serial_rx(self.scpi_tx1)
-        # print(state_ntf_tx)
         state_ntf_tx = serial_rx(self.scpi_rx)
-        # print(state_ntf_tx)
         time.sleep(self.delay)
 
         self.scpi_tx1.close()
         self.scpi_rx.close()
-  
-        while 1: # Number of result Data
+
+        while 1: 
             self.scpi_rx = serial.Serial(Rx_DEVICE_COM_PORT, baudrate=230400, timeout=6)
             self.scpi_ret = serial_rx(self.scpi_rx)
             try:
@@ -186,7 +183,7 @@ class Unlab_SR100_ToA_AoA():
                 pass
             
             ## convert types for dist and angle 
-            dist = float(distance)/100
+            dist = math.sqrt(math.pow(float(distance)/100,2) - math.pow(self.h_diff,2))
             angle = math.pi * (float(aoa_azimuth)+90)/180
             s_dist = str(dist)
             
@@ -207,7 +204,7 @@ class Unlab_SR100_ToA_AoA():
             # e_X2Y2 = pow((x_pos - self.ref[0]),2) + pow((y_pos - self.ref[1]),2)
             # e_err = str(e_X2Y2)
             
-            # self.plot()
+            self.plot()
             
             print(Fore.GREEN, x_pos, y_pos, x_ref, y_ref, s_dist, aoa_azimuth, Fore.RESET)
             # print(Fore.GREEN, x_ref, y_ref, scpi_ret,Fore.RESET)
@@ -218,21 +215,21 @@ class Unlab_SR100_ToA_AoA():
             
             self.scpi_rx.close()
 
-        self.scpi_tx1 = serial.Serial(Tx1_DEVICE_COM_PORT, baudrate=230400, timeout=6)
-        self.scpi_rx = serial.Serial(Rx_DEVICE_COM_PORT, baudrate=230400, timeout=6)
+        # self.scpi_tx1 = serial.Serial(Tx1_DEVICE_COM_PORT, baudrate=230400, timeout=6)
+        # self.scpi_rx = serial.Serial(Rx_DEVICE_COM_PORT, baudrate=230400, timeout=6)
 
-        state_ntf_rx = serial_trx(self.scpi_rx, "UWB RNG STOP\r\n") #Reset Command
-        print(state_ntf_rx)
-        state_ntf_tx = serial_trx(self.scpi_tx1, "UWB RNG STOP\r\n") #Reset Command
-        print(state_ntf_tx)
-        time.sleep(self.ranging_stop_delay)
-        state_ntf_tx = serial_rx(self.scpi_tx1)
-        print(state_ntf_tx)
-        state_ntf_tx = serial_rx(self.scpi_rx)
-        print(state_ntf_tx)
+        # state_ntf_rx = serial_trx(self.scpi_rx, "UWB RNG STOP\r\n") #Reset Command
+        # print(state_ntf_rx)
+        # state_ntf_tx = serial_trx(self.scpi_tx1, "UWB RNG STOP\r\n") #Reset Command
+        # print(state_ntf_tx)
+        # time.sleep(self.ranging_stop_delay)
+        # state_ntf_tx = serial_rx(self.scpi_tx1)
+        # print(state_ntf_tx)
+        # state_ntf_tx = serial_rx(self.scpi_rx)
+        # print(state_ntf_tx)
 
-        self.scpi_rx.close()
-        self.scpi_tx1.close()
+        # self.scpi_rx.close()
+        # self.scpi_tx1.close()
 
 
 if __name__ == "__main__": 
