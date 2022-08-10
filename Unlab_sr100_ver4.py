@@ -70,8 +70,8 @@ class Unlab_SR100_ToA_AoA():
         
         '''USER INPUT VARIABLES'''
         # self.ref = np.array([0.0001, 1.25]) # reference position of tag
-        h_anc = 1.85 # height of anchor(SECC)
-        h_tag = 1.45 # height of tag(CAR)
+        h_anc = 1.20 # height of anchor(SECC)
+        h_tag = 1.15 # height of tag(CAR)
         self.h_diff = h_anc - h_tag
 
         ''' Kalman Filter Variables '''
@@ -140,7 +140,7 @@ class Unlab_SR100_ToA_AoA():
             plt.vlines((i-10)/2, 0, 5, color='lightgray', linestyle='--', linewidth=0.7)
         x = self.X[0,0]
         y = self.X[1,0]
-        plt.scatter(x,y,color='r',s=40)
+        plt.scatter(x,y,color='r',s=450)
         plt.pause(0.1)
         
     def Positioning(self):
